@@ -181,11 +181,8 @@ async fn get_skill(State(app): S, Path(name): Path<String>, h: HeaderMap) -> Res
 async fn put_skill(State(app): S, Path(name): Path<String>, Json(mut s): Json<Skill>) -> Result<Json<Summary>, E> {
     blocking(app, move |a| {
         // Files sent: they must decode and have safe paths. Files omitted: the stored ones stay.
-        let paths: Vec<String> = match &s.files {
-            Some(f) => {
-                crate::types::check_files(f).map_err(|e| E(StatusCode::BAD_REQUEST, format!("{name}: {e}")))?;
-                f.iter().map(|f| f.path.clone()).collect()
-            }
+        let paths: Vec<String> = match checked_files(&mut s).map_err(|e| E(StatusCode::BAD_REQUEST, format!("{name}: {e}")))? {
+            Some(p) => p,
             None => db::file_infos(&a.conn(), &name)?.into_iter().map(|f| f.path).collect(),
         };
         let paths: Vec<&str> = paths.iter().map(String::as_str).collect();
@@ -206,6 +203,16 @@ async fn put_skill(State(app): S, Path(name): Path<String>, Json(mut s): Json<Sk
     })
     .await
     .map(Json)
+}
+
+/// Validate the files of a PUT and store the checked copies (modes masked to 0o777) back into the skill.
+/// Returns their paths, or None when the PUT sent no files.
+fn checked_files(s: &mut Skill) -> Result<Option<Vec<String>>, String> {
+    let Some(files) = &s.files else { return Ok(None) };
+    let clean = crate::types::check_files(files)?;
+    let paths = clean.iter().map(|f| f.path.clone()).collect();
+    s.files = Some(clean);
+    Ok(Some(paths))
 }
 
 async fn delete_skill(State(app): S, Path(name): Path<String>) -> Result<Json<Value>, E> {
@@ -432,6 +439,16 @@ pub fn serve(bind: &str, db_path: &std::path::Path) -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn put_stores_masked_file_modes() {
+        let file = |mode| crate::types::File { path: "scripts/a.sh".into(), mode, b64: "aGk=".into() };
+        let mut s = Skill { files: Some(vec![file(0o104755)]), ..Default::default() };
+        assert_eq!(checked_files(&mut s).unwrap(), Some(vec!["scripts/a.sh".to_string()]));
+        assert_eq!(s.files.unwrap()[0].mode, 0o755);
+        assert_eq!(checked_files(&mut Skill::default()).unwrap(), None);
+        assert!(checked_files(&mut Skill { files: Some(vec![crate::types::File { path: "../x".into(), mode: 0o644, b64: String::new() }]), ..Default::default() }).is_err());
+    }
 
     #[test]
     fn tokenizer_filters() {
