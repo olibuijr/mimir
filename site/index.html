@@ -296,9 +296,11 @@ latency p50       126 ms</pre></div></div>
         <article class="card card--row span-4">
           <span class="step-num">2</span>
           <h3>Start the two models</h3>
-          <p>EmbeddingGemma and Qwen3-Reranker, served by llama.cpp.</p>
+          <p>EmbeddingGemma and Qwen3-Reranker, served by llama.cpp. Embeddings are expected on :8084; tell Mímir where the reranker is.</p>
           <div class="panel"><div class="ui ui-panel" style="width:100%"><pre class="dk-code"><span class="p">$</span> llama-server -hf ggml-org/embeddinggemma-300M-GGUF --embeddings --port 8084
-<span class="p">$</span> llama-server -hf ggml-org/Qwen3-Reranker-0.6B-Q8_0-GGUF --reranking --port 8085</pre></div></div>
+<span class="p">$</span> llama-server -hf ggml-org/Qwen3-Reranker-0.6B-Q8_0-GGUF --reranking --port 8085
+<span class="p">$</span> echo MIMIR_RERANK_URL=http://127.0.0.1:8085 &gt;&gt; ~/.config/mimir/env
+<span class="p">$</span> systemctl --user restart mimir</pre></div></div>
         </article>
         <article class="card card--row span-4">
           <span class="step-num">3</span>
