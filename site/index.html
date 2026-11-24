@@ -76,7 +76,7 @@
   /* feature panels */
   #how .panel { --p-h: 300px; }
   #how .panel > .ui-panel, #install .panel > .ui-panel, #agents .panel > .ui-panel, #faq .panel > .ui-panel { height: 100%; }
-  .dk-code { margin: 0; padding: 16px 18px; font: 400 13px/1.7 var(--font-mono); white-space: pre; overflow: hidden; }
+  .dk-code { margin: 0; padding: 16px 18px; font: 400 13px/1.7 var(--font-mono); white-space: pre-wrap; overflow-wrap: anywhere; overflow: hidden; }
   .dk-code .p { color: var(--p-accent); } .dk-code .m { color: var(--p-muted); } .dk-code .ok { color: #1a7f4b; }
   .mm-bars { list-style: none; margin: 0; padding: 14px 18px; display: grid; gap: 10px; font: 400 13px/1.2 var(--font-mono); }
   .mm-bars li { display: grid; grid-template-columns: 120px 1fr 44px; gap: 12px; align-items: center; }
@@ -233,9 +233,7 @@
   { "type": "command", "command": "mimir hook" } ] }]
 
 <span class="m"># injected into the conversation</span>
-<span class="p">Mímir loaded skill</span> `release-flow` for this
-prompt (best match). Its files are in
-~/.cache/mimir/skills/release-flow.</pre></div></div>
+<span class="p">Mímir loaded skill</span> `release-flow` for this prompt (best match). It is already loaded: follow it, no need to call skill_get. Its files are in /home/you/.cache/mimir/skills/release-flow.</pre></div></div>
           </article>
         </div>
       </div>
@@ -253,11 +251,16 @@ latency p50       126 ms</pre></div></div>
           <h3>The hook never slows a prompt down</h3>
           <p>The hook gives up after 2.5 seconds, and loaded skills are cached for when the server is away.</p>
           <div class="panel"><div class="ui ui-panel" style="width:100%"><pre class="dk-code"><span class="p">$</span> mimir doctor
-<span class="ok">✓</span> server reachable, version 0.5.0 matches the client
+<span class="ok">✓</span> server http://server:7440 reachable, version 0.5.0 matches the client
 <span class="ok">✓</span> token accepted (9 skills)
-<span class="ok">✓</span> embedding and reranking models reachable
-<span class="ok">✓</span> Claude hook and MCP server registered
-<span class="ok">✓</span> Codex hook and MCP server registered</pre></div></div>
+<span class="ok">✓</span> embedding model embeddinggemma-2-Q8_0 answers /v1/embeddings
+<span class="ok">✓</span> reranking model qwen3-reranker-0.6b-q8_0 answers /v1/rerank
+<span class="ok">✓</span> embeddings match the configured model
+<span class="ok">✓</span> last backup 3 h ago
+<span class="ok">✓</span> Claude hook in ~/.claude/settings.json
+<span class="ok">✓</span> Claude MCP server registered
+<span class="ok">✓</span> Codex hook in ~/.codex/hooks.json
+<span class="ok">✓</span> Codex MCP server in ~/.codex/config.toml</pre></div></div>
         </article>
       </div>
     </div>
@@ -330,17 +333,16 @@ latency p50       126 ms</pre></div></div>
         </div>
         <div class="span-6 start-7">
           <div class="panel"><div class="ui ui-panel" style="width:100%"><pre class="dk-code"><span class="p">$</span> mimir --json search "ship 2.4.1 to production" -k 1
-{"hits":[{"name":"release-flow","score":0.92,
-  "cosine":0.71,"description":"Cut a release of ..."}],
- "ms":118}
+{"hits":[{"name":"release-flow","description":"Cut a release of ...","score":0.92,"cosine":0.71}],"ms":118,"reranked":true}
 
 <span class="p">$</span> mimir new nightly-report -d "Build the nightly ..."
-<span class="m">created nightly-report/SKILL.md</span>
+<span class="m">created ./nightly-report/SKILL.md
+fill in the TODOs, then: mimir validate ./nightly-report &amp;&amp; mimir import ./nightly-report</span>
 <span class="p">$</span> mimir import nightly-report
-<span class="m">nightly-report               v1  0 files, 0 KB</span>
+<span class="m">nightly-report               v1  0 files, 0 KB, 0 secrets</span>
 
 <span class="p">$</span> mimir --json doctor
-{"ok":true,"version":"0.5.0","checks":[...]}</pre></div></div>
+{"archive_commands":[],"checks":[...],"ok":true,"version":"0.5.0"}</pre></div></div>
         </div>
       </div>
     </div>
@@ -359,12 +361,8 @@ latency p50       126 ms</pre></div></div>
       <div class="span-6 start-7 stack-4">
         <div class="panel"><div class="ui ui-panel" style="width:100%"><pre class="dk-code"><span class="p">$</span> mimir validate release-flow
 release-flow
-  error: unexpected field `owner`: the spec
-         allows only name, description, license,
-         compatibility, metadata, allowed-tools;
-         put extra data under `metadata`
-  warn:  SKILL.md refers to `scripts/release.sh`,
-         which is not in the skill
+  error: unexpected field `owner`: the spec allows only name, description, license, compatibility, metadata, allowed-tools; put extra data under `metadata`
+  warn:  SKILL.md refers to `scripts/release.sh`, which is not in the skill
 1 skills: 0 valid (0 with warnings), 1 invalid</pre></div></div>
         <p class="t-small">Skills follow the open Agent Skills format, so <code>mimir export</code> writes plain folders any agent can read.</p>
       </div>
