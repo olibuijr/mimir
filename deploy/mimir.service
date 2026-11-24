@@ -1,0 +1,14 @@
+[Unit]
+Description=Mímir skill server (:7440)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+EnvironmentFile=%h/.config/mimir/env
+ExecStart=%h/.local/bin/mimir serve --bind 0.0.0.0:7440
+Restart=on-failure
+RestartSec=3
+MemoryMax=512M
+
+[Install]
+WantedBy=default.target

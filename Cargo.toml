@@ -1,0 +1,28 @@
+[package]
+name = "mimir"
+version = "0.5.0"
+edition = "2021"
+description = "Skill server: stores agent skills in SQLite and finds the right one for a prompt with embeddings + reranking"
+license = "MIT"
+repository = "https://github.com/olibuijr/mimir"
+homepage = "https://mimir.olibuijr.com"
+rust-version = "1.88"
+
+[dependencies]
+anyhow = "1"
+axum = "0.8"
+base64 = "0.22"
+clap = { version = "4", features = ["derive"] }
+pulldown-cmark = { version = "0.13", default-features = false, features = ["html"] }
+rusqlite = { version = "0.40", features = ["bundled"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "net", "sync", "time"] }
+futures-util = { version = "0.3", default-features = false }
+yaml-rust2 = "0.8"
+ureq = { version = "2", features = ["json"] }
+libc = "0.2"
+
+[profile.release]
+strip = true
+lto = "thin"

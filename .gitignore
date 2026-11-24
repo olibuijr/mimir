@@ -1,0 +1,6 @@
+/target
+/dist/
+*.db
+*.db-*
+# Labelled prompts are tuned to your own skills: keep them out of the repository.
+/eval/
