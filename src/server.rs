@@ -180,19 +180,7 @@ async fn get_skill(State(app): S, Path(name): Path<String>, h: HeaderMap) -> Res
 
 async fn put_skill(State(app): S, Path(name): Path<String>, Json(mut s): Json<Skill>) -> Result<Json<Summary>, E> {
     blocking(app, move |a| {
-        // Files sent: they must decode and have safe paths. Files omitted: the stored ones stay.
-        let paths: Vec<String> = match checked_files(&mut s).map_err(|e| E(StatusCode::BAD_REQUEST, format!("{name}: {e}")))? {
-            Some(p) => p,
-            None => db::file_infos(&a.conn(), &name)?.into_iter().map(|f| f.path).collect(),
-        };
-        let paths: Vec<&str> = paths.iter().map(String::as_str).collect();
-        let report = spec::validate(&name, &s.body, &paths);
-        if !report.ok() {
-            return Err(E(
-                StatusCode::UNPROCESSABLE_ENTITY,
-                format!("{name}: SKILL.md does not follow the Agent Skills spec (agentskills.io/specification): {}", report.errors.join("; ")),
-            ));
-        }
+        check_put(&name, &mut s)?;
         // The frontmatter is the single source of the description.
         s.description = spec::parse(&s.body).0.description.unwrap_or_default().trim().to_string();
         s.name = name;
@@ -203,6 +191,23 @@ async fn put_skill(State(app): S, Path(name): Path<String>, Json(mut s): Json<Sk
     })
     .await
     .map(Json)
+}
+
+/// Check a PUT before anything is stored. Files sent: they must decode and have safe paths.
+/// Files omitted: the stored ones stay, and are not read here. Spec errors never depend on the
+/// file list beyond the path checks (stored paths passed them when written); it only adds warnings,
+/// which a PUT does not return. Reading the stored list would also race with a concurrent PUT.
+fn check_put(name: &str, s: &mut Skill) -> Result<(), E> {
+    let paths = checked_files(s).map_err(|e| E(StatusCode::BAD_REQUEST, format!("{name}: {e}")))?.unwrap_or_default();
+    let paths: Vec<&str> = paths.iter().map(String::as_str).collect();
+    let report = spec::validate(name, &s.body, &paths);
+    if !report.ok() {
+        return Err(E(
+            StatusCode::UNPROCESSABLE_ENTITY,
+            format!("{name}: SKILL.md does not follow the Agent Skills spec (agentskills.io/specification): {}", report.errors.join("; ")),
+        ));
+    }
+    Ok(())
 }
 
 /// Validate the files of a PUT and store the checked copies (modes masked to 0o777) back into the skill.
@@ -448,6 +453,18 @@ mod tests {
         assert_eq!(s.files.unwrap()[0].mode, 0o755);
         assert_eq!(checked_files(&mut Skill::default()).unwrap(), None);
         assert!(checked_files(&mut Skill { files: Some(vec![crate::types::File { path: "../x".into(), mode: 0o644, b64: String::new() }]), ..Default::default() }).is_err());
+    }
+
+    #[test]
+    fn put_check_needs_no_stored_files() {
+        let body = "---\nname: demo\ndescription: Demo skill. See references/guide.md and run scripts/go.sh.\n---\n# demo\n";
+        let mut s = Skill { body: body.into(), ..Default::default() };
+        assert!(check_put("demo", &mut s).is_ok());
+        // Clean file lists only change warnings, never the verdict.
+        assert_eq!(spec::validate("demo", body, &[]).errors, spec::validate("demo", body, &["references/guide.md", "scripts/go.sh"]).errors);
+        assert_eq!(check_put("Demo", &mut s.clone()).unwrap_err().0, StatusCode::UNPROCESSABLE_ENTITY);
+        let bad = crate::types::File { path: "../x".into(), mode: 0o644, b64: String::new() };
+        assert_eq!(check_put("demo", &mut Skill { files: Some(vec![bad]), ..s }).unwrap_err().0, StatusCode::BAD_REQUEST);
     }
 
     #[test]
