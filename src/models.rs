@@ -161,6 +161,27 @@ impl Models {
     }
 }
 
+impl Models {
+    /// Health check of the embedding server: one real one-input /v1/embeddings call.
+    pub fn probe_embed(&self) -> Result<()> {
+        self.embed_with(&["ping".into()], PROBE_TIMEOUT).map(drop)
+    }
+
+    /// Health check of the rerank server: one real one-document /v1/rerank call. An embeddings-only
+    /// server answers with an error here, so a MIMIR_RERANK_URL pointing at it fails.
+    pub fn probe_rerank(&self) -> Result<()> {
+        let (what, url) = ("rerank request", format!("{}/v1/rerank", self.rerank_url));
+        let body = json!({ "model": self.rerank_model, "query": "ping", "documents": ["ping"] });
+        let r = post_json(&self.agent, what, &url, PROBE_TIMEOUT, body)?;
+        match r["results"].as_array() {
+            Some(a) if a.len() == 1 && a[0]["relevance_score"].is_number() => Ok(()),
+            _ => Err(ModelError::bad_shape(what, &url, &r).into()),
+        }
+    }
+}
+
+const PROBE_TIMEOUT: Duration = Duration::from_secs(2);
+
 /// EmbeddingGemma prompt formats.
 pub fn query_text(q: &str) -> String {
     format!("task: search result | query: {}", clip(q, 4000))
@@ -300,6 +321,22 @@ pub(crate) mod tests {
         assert_eq!(e.downcast_ref::<ModelError>().unwrap().status(), 502);
         assert!(e.to_string().contains("501") && e.to_string().contains("does not support reranking"), "{e}");
         assert_eq!(models("", &mock(200, RERANK_OK, z)).rerank_within("q", &["d".into()], Duration::MAX).unwrap(), vec![0.75]);
+    }
+
+    #[test]
+    fn probes_call_each_model() {
+        let z = Duration::ZERO;
+        let (embed, rerank) = (mock(200, EMBED_OK, z), mock(200, RERANK_OK, z));
+        assert!(models(&embed, &rerank).probe_embed().is_ok());
+        assert!(models(&embed, &rerank).probe_rerank().is_ok());
+        // The rerank URL left pointing at the embeddings server: it does not answer /v1/rerank.
+        let only_embed = mock(501, r#"{"error":{"message":"This server does not support reranking. Start it with --reranking"}}"#, z);
+        assert!(models(&only_embed, &only_embed).probe_embed().is_err());
+        assert!(models(&embed, &only_embed).probe_rerank().is_err());
+        // A server that answers 200 with an embeddings body is no reranker either.
+        assert!(models(&embed, &embed).probe_rerank().is_err());
+        assert!(models(&rerank, &rerank).probe_embed().is_err());
+        assert!(models(&dead_url(), &rerank).probe_embed().is_err());
     }
 
     #[test]

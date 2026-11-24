@@ -40,7 +40,7 @@
     </div>
     <div class="foot">
       {#if config}
-        <Tooltip text={config.models_ok ? 'Models reachable' : 'Models unreachable'}>
+        <Tooltip text={config.models_ok ? 'Models reachable' : config.embed_error ? `Embedding model: ${config.embed_error}` : config.rerank_error ? `Reranking model: ${config.rerank_error}` : 'Models unreachable'}>
           <span class="status"><span class="dot" class:ok={config.models_ok} class:bad={!config.models_ok}></span>Models</span>
         </Tooltip>
         <Tooltip text={live.connected ? 'Live: updates appear as they happen' : 'Reconnecting to live updates'}>

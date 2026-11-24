@@ -15,6 +15,7 @@ All notable changes to this project are documented here. The format follows
 - `mimir get` and the MCP `skill_get` put the skill name into the URL unencoded and, with the server down, joined it onto the cache path unchecked (`../x` escaped the cache). Names are now checked against the spec's name rule first, with a clear error.
 - Model server failures came back as HTTP 500, like a Mímir bug. They are now 502 when the model server answered with an error or an unusable response, 503 when it cannot be reached and 504 when it is too slow; messages name the call and the server, without credentials from its URL.
 - The server's model timeouts (embedding 2 s, then reranking 3 s) could outlast the hook's 2.5 s, so a slow reranker meant no suggestions at all. A `/match` now has one deadline (`budget_ms` from the client, else `MIMIR_MATCH_BUDGET_MS`, default 2000 ms) shared by both calls; when the reranker does not fit, hits come back in embedding order with `"reranked": false` and the hook does not auto-load from them.
+- `mimir doctor` only listed `/v1/models` on both model URLs, so a `MIMIR_RERANK_URL` pointing at the embeddings server passed. The server now makes a real one-input embedding call and a one-document rerank call; `/api/config` reports `embed_ok`/`rerank_ok` with the errors, and doctor checks each model separately with a hint (e.g. set `MIMIR_RERANK_URL`).
 
 ## [0.5.0] - 2026-11-24
 

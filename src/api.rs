@@ -14,7 +14,6 @@ use serde::Deserialize;
 use serde_json::{json, Value};
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex, OnceLock};
-use std::time::Duration;
 
 type S = State<Arc<App>>;
 const DAY: i64 = 86400;
@@ -31,8 +30,14 @@ pub fn routes() -> Router<Arc<App>> {
         .route("/api/log", get(log).delete(clear_log))
 }
 
-fn models_ok(m: &Models) -> bool {
-    [&m.url, &m.rerank_url].iter().all(|u| ureq::get(&format!("{u}/v1/models")).timeout(Duration::from_secs(1)).call().is_ok())
+/// Real calls to both models, in parallel: (embed error, rerank error), None when it worked.
+/// Listing /v1/models is not enough: it passes when MIMIR_RERANK_URL points at the embeddings server.
+fn model_errors(m: &Models) -> (Option<String>, Option<String>) {
+    std::thread::scope(|s| {
+        let rerank = s.spawn(|| m.probe_rerank().err().map(|e| format!("{e:#}")));
+        let embed = m.probe_embed().err().map(|e| format!("{e:#}"));
+        (embed, rerank.join().unwrap_or_else(|_| Some("rerank check panicked".into())))
+    })
 }
 
 async fn config(State(app): S, h: HeaderMap) -> Result<Json<Value>, E> {
@@ -46,6 +51,7 @@ async fn config(State(app): S, h: HeaderMap) -> Result<Json<Value>, E> {
             (s, l, b, db::meta_get(&c, "embed_model")?, db::dim_mismatch(&c)?, db::log_first_ts(&c)?, backup_at)
         };
         let reembed_needed = mismatch || stored.as_deref().is_some_and(|m| m != a.models.embed_model);
+        let (embed_error, rerank_error) = model_errors(&a.models);
         Ok(Json(json!({
             "version": env!("CARGO_PKG_VERSION"),
             // Fingerprint of the embedded UI; open pages reload themselves when it changes.
@@ -54,7 +60,11 @@ async fn config(State(app): S, h: HeaderMap) -> Result<Json<Value>, E> {
             "candidates": CANDIDATES,
             "embed_model": a.models.embed_model,
             "rerank_model": a.models.rerank_model,
-            "models_ok": models_ok(&a.models),
+            "models_ok": embed_error.is_none() && rerank_error.is_none(),
+            "embed_ok": embed_error.is_none(),
+            "rerank_ok": rerank_error.is_none(),
+            "embed_error": embed_error,
+            "rerank_error": rerank_error,
             "skills": skills,
             "log_rows": log_rows,
             "db_bytes": db_bytes,

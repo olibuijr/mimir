@@ -553,6 +553,30 @@ fn strays() -> Vec<(&'static str, &'static str, Vec<String>)> {
         .collect()
 }
 
+/// The server's checks of its two models, each with a hint; older servers only report `models_ok`.
+fn model_checks(o: &mut Out, cfg: &Value) {
+    let err = |k: &str| cfg[k].as_str().unwrap_or("no answer").to_string();
+    match (cfg["embed_ok"].as_bool(), cfg["rerank_ok"].as_bool()) {
+        (Some(e), Some(r)) => {
+            let model = |k: &str| cfg[k].as_str().unwrap_or("?").to_string();
+            if e {
+                o.good(format!("embedding model {} answers /v1/embeddings", model("embed_model")));
+            } else {
+                o.bad(format!("embedding model failed: {}; check MIMIR_MODELS_URL and MIMIR_EMBED_MODEL in the server's env", err("embed_error")));
+            }
+            if r {
+                o.good(format!("reranking model {} answers /v1/rerank", model("rerank_model")));
+            } else {
+                o.bad(format!("reranking model failed: {}; set MIMIR_RERANK_URL to the server that runs the reranker (and MIMIR_RERANK_MODEL) in the server's env", err("rerank_error")));
+            }
+        }
+        _ => match cfg["models_ok"].as_bool() {
+            Some(b) => o.check(b, "embedding and reranking models reachable", "embedding/reranking models are not reachable from the server"),
+            None => o.warn("server did not report models_ok"),
+        },
+    }
+}
+
 /// `mimir doctor`; returns false when any check failed.
 pub fn doctor(as_json: bool) -> bool {
     let mut o = Out { ok: true, json: as_json.then(Vec::new) };
@@ -577,10 +601,7 @@ pub fn doctor(as_json: bool) -> bool {
                 match c.send::<Value>("GET", "/api/config", None, Duration::from_secs(10)) {
                     Err(e) => o.bad(format!("/api/config: {e:#}")),
                     Ok(cfg) => {
-                        match cfg["models_ok"].as_bool() {
-                            Some(b) => o.check(b, "embedding and reranking models reachable", "embedding/reranking models are not reachable from the server"),
-                            None => o.warn("server did not report models_ok"),
-                        }
+                        model_checks(&mut o, &cfg);
                         if let Some(b) = cfg["reembed_needed"].as_bool() {
                             o.check(!b, "embeddings match the configured model", "embeddings are stale for the configured model: run `mimir reembed`");
                         }
@@ -1135,5 +1156,29 @@ mod tests {
         // Responses from servers that predate `reranked` count as reranked.
         let r: MatchResp = serde_json::from_str(r#"{"hits":[],"ms":1}"#).unwrap();
         assert!(r.reranked);
+    }
+
+    #[test]
+    fn doctor_reports_each_model() {
+        let run = |cfg: Value| {
+            let mut o = Out { ok: true, json: Some(vec![]) };
+            model_checks(&mut o, &cfg);
+            (o.ok, o.json.unwrap().iter().map(|c| c["message"].as_str().unwrap().to_string()).collect::<Vec<_>>())
+        };
+        let (ok, m) = run(
+            json!({ "embed_ok": true, "rerank_ok": false, "embed_model": "eg", "rerank_model": "qr", "rerank_error": "rerank request: model server http://h:8084/v1/rerank answered 501: x" }),
+        );
+        assert!(!ok);
+        assert_eq!(m[0], "embedding model eg answers /v1/embeddings");
+        assert!(
+            m[1].starts_with("reranking model failed: rerank request: model server http://h:8084/v1/rerank answered 501")
+                && m[1].contains("set MIMIR_RERANK_URL"),
+            "{}",
+            m[1]
+        );
+        let (ok, m) = run(json!({ "embed_ok": false, "rerank_ok": true, "embed_error": "boom" }));
+        assert!(!ok && m[0].contains("boom") && m[0].contains("MIMIR_MODELS_URL") && m[1] == "reranking model ? answers /v1/rerank");
+        // A server from before the split checks.
+        assert_eq!(run(json!({ "models_ok": true })), (true, vec!["embedding and reranking models reachable".to_string()]));
     }
 }
