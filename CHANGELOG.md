@@ -11,6 +11,7 @@ All notable changes to this project are documented here. The format follows
 - `mimir eval` panicked (index out of bounds) on a cases file with no cases; it now says so and exits 1.
 - The web UI dev server (`npm run dev`) listened on every interface and added the real token to proxied requests, so anyone on the LAN had full access. It now listens on localhost; `MIMIR_DEV_HOST` opts into other hosts.
 - `deploy/install.sh` appended a second `MIMIR_TOKEN` when `~/.config/mimir/env` held one shorter than 16 characters, so systemd (last line) and the CLI (first line) used different tokens. It now replaces the short one.
+- The database right after creation and each new backup briefly had the default file mode, and the backups directory was 0755. Both files are now created 0600 and the directory 0700 (an existing one is tightened).
 
 ## [0.5.0] - 2026-11-24
 

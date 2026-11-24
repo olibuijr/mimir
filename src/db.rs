@@ -57,11 +57,27 @@ pub fn open(path: &Path) -> Result<Connection> {
     if let Some(dir) = path.parent() {
         std::fs::create_dir_all(dir)?;
     }
+    // The DB holds secrets: create it 0600 before SQLite does, so it never exists with the default
+    // mode (SQLite gives the -wal and -shm files the main file's mode). The chmod covers older files.
+    create_private(path, false)?;
     let c = Connection::open(path)?;
-    // The DB holds secrets.
     std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o600))?;
     init(&c)?;
     Ok(c)
+}
+
+/// Create `path` with mode 0600 (`new`: it must not exist yet). An existing file is left as it is.
+fn create_private(path: &Path, new: bool) -> Result<()> {
+    use std::os::unix::fs::OpenOptionsExt;
+    let mut o = std::fs::OpenOptions::new();
+    o.write(true).mode(0o600);
+    if new {
+        o.create_new(true)
+    } else {
+        o.create(true)
+    };
+    o.open(path)?;
+    Ok(())
 }
 
 /// Create missing tables and add columns older databases lack.
@@ -110,14 +126,19 @@ fn civil(ts: i64) -> (i64, i64, i64) {
     (yoe + era * 400 + (m <= 2) as i64, m, d)
 }
 
-/// `VACUUM INTO dir/mimir-YYYYMMDD-HHMMSS.db`, chmod 0600, keep only the newest `keep` backups.
+/// `VACUUM INTO dir/mimir-YYYYMMDD-HHMMSS.db` (dir 0700, file 0600 from the start), keep only the newest `keep` backups.
 pub fn backup(c: &Connection, dir: &Path, keep: usize) -> Result<PathBuf> {
-    std::fs::create_dir_all(dir)?;
+    use std::os::unix::fs::DirBuilderExt;
+    std::fs::DirBuilder::new().recursive(true).mode(0o700).create(dir)?;
+    // Older versions made the directory 0755.
+    std::fs::set_permissions(dir, std::fs::Permissions::from_mode(0o700))?;
     let t = now();
     let (y, mo, d) = civil(t);
     let sod = t.rem_euclid(86400);
     let path = dir.join(format!("mimir-{y:04}{mo:02}{d:02}-{:02}{:02}{:02}.db", sod / 3600, sod % 3600 / 60, sod % 60));
     let _ = std::fs::remove_file(&path);
+    // VACUUM INTO accepts an empty file, which then keeps the private mode it was created with.
+    create_private(&path, true)?;
     c.execute("VACUUM INTO ?1", [path.to_string_lossy().as_ref()])?;
     std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o600))?;
     let mut all = backups(dir);
@@ -615,10 +636,39 @@ mod tests {
     }
 
     #[test]
+    fn db_and_backup_dir_are_private_from_the_start() {
+        let dir = std::env::temp_dir().join(format!("mimir-perm-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        let mode = |p: &Path| std::fs::metadata(p).unwrap().permissions().mode() & 0o777;
+        // The file exists 0600 before SQLite ever opens it.
+        let p = dir.join("new.db");
+        std::fs::create_dir_all(&dir).unwrap();
+        create_private(&p, false).unwrap();
+        assert_eq!(mode(&p), 0o600);
+        assert!(create_private(&p, true).is_err());
+        let c = open(&p).unwrap();
+        put(&c, &skill("a", "b", None), &[1.0], "m").unwrap();
+        assert_eq!(mode(&p), 0o600);
+        assert_eq!(mode(&dir.join("new.db-wal")), 0o600);
+        // An older, world-readable DB is tightened.
+        let old = dir.join("old.db");
+        std::fs::write(&old, b"").unwrap();
+        std::fs::set_permissions(&old, std::fs::Permissions::from_mode(0o644)).unwrap();
+        open(&old).unwrap();
+        assert_eq!(mode(&old), 0o600);
+        // A backups dir that does not exist yet is created 0700.
+        let b = backup(&c, &dir.join("backups"), 7).unwrap();
+        assert_eq!(mode(&dir.join("backups")), 0o700);
+        assert_eq!(mode(&b), 0o600);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
     fn backup_keeps_newest() {
         let dir = std::env::temp_dir().join(format!("mimir-bak-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).unwrap();
+        std::fs::set_permissions(&dir, std::fs::Permissions::from_mode(0o755)).unwrap();
         for n in ["20200101-000000", "20200102-000000", "20200103-000000"] {
             std::fs::write(dir.join(format!("mimir-{n}.db")), b"x").unwrap();
         }
@@ -627,6 +677,8 @@ mod tests {
         let p = backup(&c, &dir, 2).unwrap();
         assert!(p.exists());
         assert_eq!(std::fs::metadata(&p).unwrap().permissions().mode() & 0o777, 0o600);
+        assert_eq!(std::fs::metadata(&dir).unwrap().permissions().mode() & 0o777, 0o700);
+        assert_eq!(get(&open(&p).unwrap(), "a").unwrap().unwrap().body, "b");
         let mut left: Vec<_> = backups(&dir).into_iter().map(|p| p.file_name().unwrap().to_string_lossy().into_owned()).collect();
         left.sort();
         assert_eq!(left.len(), 2);
