@@ -151,7 +151,7 @@ cache dir when it is installed.
 
 ## API
 
-Every route except `/health`, the UI assets and `POST /api/login` is authenticated **before the request
+Every route except `/health`, the UI assets, `POST /api/login` and `POST /api/logout` is authenticated **before the request
 body is read** (401 otherwise). `/skills/*`, `/reembed` and `/api/dist/mimir` accept only
 `Authorization: Bearer $MIMIR_TOKEN` (they return or change secrets); `/api/*` and `/match` also accept
 the UI cookie. Bodies are limited to 2 MB, except `PUT /skills/{name}` (64 MB). Every response carries
@@ -182,7 +182,7 @@ binary by `build.rs`; without it the server serves a "UI not built" stub.
 Dev: `cd web && npm run dev` serves on :7441 and proxies `/api` and `/match` to `MIMIR_URL` (default `http://127.0.0.1:7440`) with the token
 from `~/.config/mimir/env`.
 
-Extra routes (cookie or bearer): `POST /api/login`, `POST /api/logout`, `GET /api/config`,
+Extra routes (cookie or bearer): `GET /api/config`,
 `GET /api/skills`, `GET /api/skills/{name}`, `GET /api/skills/{name}/files/{path}`,
 `GET /api/stats?since=`, `GET /api/log?skill=&nohit=1&q=&before=&limit=`,
 `DELETE /api/log?before=` (needs header `X-Mimir: 1`). Log rows are pruned after 30 days.
