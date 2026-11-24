@@ -3,7 +3,7 @@
 # Mímir
 
 [![CI](https://github.com/olibuijr/mimir/actions/workflows/ci.yml/badge.svg)](https://github.com/olibuijr/mimir/actions/workflows/ci.yml)
-[![Version](https://img.shields.io/badge/version-0.5.0-6b5bd2)](CHANGELOG.md)
+[![Version](https://img.shields.io/badge/version-0.5.1-6b5bd2)](CHANGELOG.md)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 
 **A self-hosted skill server for AI coding agents.**

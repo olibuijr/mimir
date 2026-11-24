@@ -251,7 +251,7 @@ min 0.1  decide-acc <b>0.90</b>  false-alarm <span class="ok">0</span></pre></di
           <h3>The hook never slows a prompt down</h3>
           <p>The hook gives up after 2.5 seconds; loaded skills are cached for offline use.</p>
           <div class="panel"><div class="ui ui-panel" style="width:100%"><pre class="dk-code"><span class="p">$</span> mimir doctor
-<span class="ok">✓</span> server http://server:7440 reachable, version 0.5.0 matches the client
+<span class="ok">✓</span> server http://server:7440 reachable, version 0.5.1 matches the client
 <span class="ok">✓</span> token accepted (9 skills)
 <span class="ok">✓</span> embedding model embeddinggemma-2-Q8_0 answers /v1/embeddings
 <span class="ok">✓</span> reranking model qwen3-reranker-0.6b-q8_0 answers /v1/rerank
@@ -339,7 +339,7 @@ fill in the TODOs, then: mimir validate ./nightly-report &amp;&amp; mimir import
 <span class="m">nightly-report               v1  0 files, 0 KB, 0 secrets</span>
 
 <span class="p">$</span> mimir --json doctor
-{"archive_commands":[],"checks":[...],"ok":true,"version":"0.5.0"}</pre></div></div>
+{"archive_commands":[],"checks":<span>[</span>...],"ok":true,"version":"0.5.1"}</pre></div></div>
         </div>
       </div>
     </div>

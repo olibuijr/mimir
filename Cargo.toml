@@ -1,6 +1,6 @@
 [package]
 name = "mimir"
-version = "0.5.0"
+version = "0.5.1"
 edition = "2021"
 description = "Skill server: stores agent skills in SQLite and finds the right one for a prompt with embeddings + reranking"
 license = "MIT"
