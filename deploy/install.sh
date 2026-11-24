@@ -16,7 +16,13 @@ unit="$here/mimir.service"
 install -Dm755 "$bin" ~/.local/bin/mimir
 mkdir -p ~/.config/mimir
 if ! grep -q '^MIMIR_TOKEN=.\{16,\}' ~/.config/mimir/env 2>/dev/null; then
-  (umask 077; printf 'MIMIR_TOKEN=%s\n' "$(openssl rand -hex 24)" >> ~/.config/mimir/env)
+  token=$(openssl rand -hex 24)
+  # Replace a too-short token rather than add a second line: systemd uses the last, the CLI the first.
+  if grep -q '^MIMIR_TOKEN=' ~/.config/mimir/env 2>/dev/null; then
+    sed -i "s/^MIMIR_TOKEN=.*/MIMIR_TOKEN=$token/" ~/.config/mimir/env
+  else
+    (umask 077; printf 'MIMIR_TOKEN=%s\n' "$token" >> ~/.config/mimir/env)
+  fi
   echo "wrote a new MIMIR_TOKEN to ~/.config/mimir/env (clients and the web UI need it)"
 fi
 chmod 600 ~/.config/mimir/env
