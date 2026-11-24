@@ -152,7 +152,7 @@ impl Client {
     }
     /// Fetch a skill without counting it as used.
     pub fn get(&self, name: &str) -> Result<Skill> {
-        self.send("GET", &format!("/skills/{name}"), None, Duration::from_secs(30))
+        self.send("GET", &skill_path(name)?, None, Duration::from_secs(30))
     }
 
     /// Fetch a skill to use it: the server records a load (suggested vs actually loaded).
@@ -161,15 +161,15 @@ impl Client {
     }
 
     pub fn load_within(&self, name: &str, timeout: Duration) -> Result<Skill> {
-        let path = format!("/skills/{name}");
+        let path = skill_path(name)?;
         let r = Self::finish(&format!("GET {path}"), self.req("GET", &path, timeout).set("X-Mimir-Load", "1").call())?;
         Ok(r.into_json()?)
     }
     pub fn put(&self, s: &Skill) -> Result<Summary> {
-        self.send("PUT", &format!("/skills/{}", s.name), Some(serde_json::to_value(s)?), Duration::from_secs(60))
+        self.send("PUT", &skill_path(&s.name)?, Some(serde_json::to_value(s)?), Duration::from_secs(60))
     }
     pub fn delete(&self, name: &str) -> Result<Value> {
-        self.send("DELETE", &format!("/skills/{name}"), None, Duration::from_secs(10))
+        self.send("DELETE", &skill_path(name)?, None, Duration::from_secs(10))
     }
     pub fn reembed(&self) -> Result<Value> {
         self.send("POST", "/reembed", Some(json!({})), Duration::from_secs(300))
@@ -180,6 +180,21 @@ impl Client {
     pub fn matches_ver(&self, req: &MatchReq, timeout: Duration) -> Result<(MatchResp, Option<String>)> {
         self.send_ver("POST", "/match", Some(serde_json::to_value(req)?), timeout)
     }
+}
+
+/// Refuse names that are not spec skill names: they go into URLs and cache paths unescaped.
+fn check_name(name: &str) -> Result<()> {
+    anyhow::ensure!(
+        spec::valid_name(name),
+        "invalid skill name {name:?}: skill names are 1-64 lowercase letters, digits and single hyphens, not starting or ending with a hyphen"
+    );
+    Ok(())
+}
+
+/// `/skills/<name>` for a checked name.
+fn skill_path(name: &str) -> Result<String> {
+    check_name(name)?;
+    Ok(format!("/skills/{name}"))
 }
 
 /// Files of a skill as returned by the server (always present on GET).
@@ -384,6 +399,7 @@ fn rewrite_paths(text: &str, name: &str, dir: &Path) -> String {
 }
 
 pub fn get_text(c: &Client, name: &str) -> Result<String> {
+    check_name(name)?;
     let s = match c.load(name) {
         Ok(s) => s,
         Err(e) if is_unreachable(&e) => return cached_text(name).ok_or(e),
@@ -402,6 +418,7 @@ pub fn get_text(c: &Client, name: &str) -> Result<String> {
 
 /// The last materialized copy of a skill, for when the server cannot be reached.
 fn cached_text(name: &str) -> Option<String> {
+    check_name(name).ok()?;
     let dir = cache_dir().join(name);
     let body = std::fs::read_to_string(dir.join("SKILL.md")).ok()?;
     let ver = std::fs::read_to_string(dir.join(".mimir-version")).map(|v| v.trim().to_string()).unwrap_or_else(|_| "?".into());
@@ -1084,5 +1101,20 @@ mod tests {
         assert_eq!(classify(&cs[2], None), Outcome::CorrectNone);
         assert_eq!(classify(&cs[2], Some("a")), Outcome::Right);
         assert_eq!(classify(&cs[2], Some("z")), Outcome::Wrong);
+    }
+
+    #[test]
+    fn skill_names_are_checked_before_urls_and_cache_paths() {
+        // Port 9 (discard) is never served: any request would fail as unreachable, not as invalid.
+        let c = Client { url: "http://127.0.0.1:9".into(), token: "t".into(), agent: ureq::AgentBuilder::new().build() };
+        for bad in ["../etc", "a/b", "x?y=1", "Bad", "", "a b"] {
+            let e = get_text(&c, bad).unwrap_err();
+            assert!(!is_unreachable(&e) && e.to_string().contains("invalid skill name"), "{bad}: {e:#}");
+            assert!(c.get(bad).is_err() && c.delete(bad).is_err() && c.load_within(bad, Duration::from_secs(1)).is_err());
+            assert!(cached_text(bad).is_none());
+        }
+        assert_eq!(skill_path("pdf-tools").unwrap(), "/skills/pdf-tools");
+        // A valid name does reach the network (and fails as unreachable here).
+        assert!(c.get("pdf-tools").is_err_and(|e| is_unreachable(&e)));
     }
 }
