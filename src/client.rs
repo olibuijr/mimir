@@ -177,8 +177,11 @@ impl Client {
     pub fn matches(&self, req: &MatchReq, timeout: Duration) -> Result<MatchResp> {
         Ok(self.matches_ver(req, timeout)?.0)
     }
+    /// The request carries a `budget_ms` that fits inside `timeout` unless it sets one itself.
     pub fn matches_ver(&self, req: &MatchReq, timeout: Duration) -> Result<(MatchResp, Option<String>)> {
-        self.send_ver("POST", "/match", Some(serde_json::to_value(req)?), timeout)
+        let mut req = req.clone();
+        req.budget_ms.get_or_insert(match_budget(timeout));
+        self.send_ver("POST", "/match", Some(serde_json::to_value(&req)?), timeout)
     }
 }
 
@@ -195,6 +198,11 @@ fn check_name(name: &str) -> Result<()> {
 fn skill_path(name: &str) -> Result<String> {
     check_name(name)?;
     Ok(format!("/skills/{name}"))
+}
+
+/// The server's share of a /match timeout: what is left after connecting and transfer (500 ms).
+fn match_budget(timeout: Duration) -> u64 {
+    (timeout.as_millis() as u64).saturating_sub(500).max(100)
 }
 
 /// Files of a skill as returned by the server (always present on GET).
@@ -717,10 +725,11 @@ pub fn hook() -> Result<()> {
         return Ok(());
     }
     // Suggestions alone are never acted on, so a confident top hit is loaded right here (once per session).
+    // Only on reranker scores: cosine fallbacks (the reranker did not fit the budget) are just listed.
     let min: f32 = std::env::var("MIMIR_AUTOLOAD_MIN").ok().and_then(|s| s.parse().ok()).unwrap_or(0.9);
     let sf = session_file(v["session_id"].as_str().unwrap_or(""));
     let mut loaded: Option<(String, PathBuf, String)> = None;
-    if let Some(top) = r.hits.first().filter(|h| h.score >= min && !session_has(&sf, &h.name)) {
+    if let Some(top) = r.hits.first().filter(|h| r.reranked && h.score >= min && !session_has(&sf, &h.name)) {
         if let Ok((dir, body)) = c.load_within(&top.name, timeout).and_then(|s| materialize(&s)) {
             session_add(&sf, &top.name);
             loaded = Some((top.name.clone(), dir, body));
@@ -1116,5 +1125,15 @@ mod tests {
         assert_eq!(skill_path("pdf-tools").unwrap(), "/skills/pdf-tools");
         // A valid name does reach the network (and fails as unreachable here).
         assert!(c.get("pdf-tools").is_err_and(|e| is_unreachable(&e)));
+    }
+
+    #[test]
+    fn match_budget_fits_the_timeout() {
+        assert_eq!(match_budget(Duration::from_millis(2500)), 2000);
+        assert_eq!(match_budget(Duration::from_secs(30)), 29_500);
+        assert_eq!(match_budget(Duration::from_millis(300)), 100);
+        // Responses from servers that predate `reranked` count as reranked.
+        let r: MatchResp = serde_json::from_str(r#"{"hits":[],"ms":1}"#).unwrap();
+        assert!(r.reranked);
     }
 }

@@ -112,9 +112,10 @@ impl Models {
         }
     }
 
-    /// One query embedding on the hook's tight timeout.
-    pub fn embed(&self, inputs: &[String]) -> Result<Vec<Vec<f32>>> {
-        self.embed_with(inputs, self.embed_timeout)
+    /// One query embedding on the hook's tight timeout, never waiting longer than `left` (what
+    /// remains of the request's budget).
+    pub fn embed_within(&self, inputs: &[String], left: Duration) -> Result<Vec<Vec<f32>>> {
+        self.embed_with(inputs, self.embed_timeout.min(left))
     }
 
     /// Many documents (skill upload, reembed): not latency critical, so a long timeout.
@@ -135,8 +136,9 @@ impl Models {
             .collect()
     }
 
-    /// One score per document, in document order.
-    pub fn rerank(&self, query: &str, docs: &[String]) -> Result<Vec<f32>> {
+    /// One score per document, in document order, never waiting longer than `left` (what remains
+    /// of the request's budget).
+    pub fn rerank_within(&self, query: &str, docs: &[String], left: Duration) -> Result<Vec<f32>> {
         if docs.is_empty() {
             return Ok(vec![]);
         }
@@ -147,7 +149,7 @@ impl Models {
             body["instruction"] = json!(instruction);
         }
         let (what, url) = ("rerank request", format!("{}/v1/rerank", self.rerank_url));
-        let r = post_json(&self.agent, what, &url, self.rerank_timeout, body)?;
+        let r = post_json(&self.agent, what, &url, self.rerank_timeout.min(left), body)?;
         let mut scores = vec![0.0; docs.len()];
         for x in r["results"].as_array().ok_or_else(|| ModelError::bad_shape(what, &url, &r))? {
             let i = x["index"].as_u64().unwrap_or(0) as usize;
@@ -260,14 +262,19 @@ pub(crate) mod tests {
     }
 
     pub(crate) fn models(url: &str, rerank_url: &str) -> Models {
+        models_with(url, rerank_url, Duration::from_millis(300))
+    }
+
+    /// Test models whose own embed and rerank timeouts are both `timeout`.
+    pub(crate) fn models_with(url: &str, rerank_url: &str, timeout: Duration) -> Models {
         Models {
             url: url.into(),
             rerank_url: rerank_url.into(),
             embed_model: "e".into(),
             rerank_model: "r".into(),
             agent: ureq::AgentBuilder::new().timeout_connect(Duration::from_millis(500)).build(),
-            embed_timeout: Duration::from_millis(300),
-            rerank_timeout: Duration::from_millis(300),
+            embed_timeout: timeout,
+            rerank_timeout: timeout,
         }
     }
 
@@ -282,17 +289,17 @@ pub(crate) mod tests {
     fn model_failures_are_classified() {
         let z = Duration::ZERO;
         let q = ["q".to_string()];
-        assert_eq!(models(&mock(200, EMBED_OK, z), "").embed(&q).unwrap(), vec![vec![0.6, 0.8]]);
-        assert_eq!(kind(models(&mock(500, r#"{"error":"boom"}"#, z), "").embed(&q)), 502);
-        assert_eq!(kind(models(&mock(200, r#"{"data":[]}"#, z), "").embed(&q)), 502);
-        assert_eq!(kind(models(&mock(200, "not json", z), "").embed(&q)), 502);
-        assert_eq!(kind(models(&dead_url(), "").embed(&q)), 503);
-        assert_eq!(kind(models(&mock(200, EMBED_OK, Duration::from_millis(1500)), "").embed(&q)), 504);
+        assert_eq!(models(&mock(200, EMBED_OK, z), "").embed_within(&q, Duration::MAX).unwrap(), vec![vec![0.6, 0.8]]);
+        assert_eq!(kind(models(&mock(500, r#"{"error":"boom"}"#, z), "").embed_within(&q, Duration::MAX)), 502);
+        assert_eq!(kind(models(&mock(200, r#"{"data":[]}"#, z), "").embed_within(&q, Duration::MAX)), 502);
+        assert_eq!(kind(models(&mock(200, "not json", z), "").embed_within(&q, Duration::MAX)), 502);
+        assert_eq!(kind(models(&dead_url(), "").embed_within(&q, Duration::MAX)), 503);
+        assert_eq!(kind(models(&mock(200, EMBED_OK, Duration::from_millis(1500)), "").embed_within(&q, Duration::MAX)), 504);
         let m = models("", &mock(501, r#"{"error":{"message":"This server does not support reranking"}}"#, z));
-        let e = m.rerank("q", &["d".into()]).unwrap_err();
+        let e = m.rerank_within("q", &["d".into()], Duration::MAX).unwrap_err();
         assert_eq!(e.downcast_ref::<ModelError>().unwrap().status(), 502);
         assert!(e.to_string().contains("501") && e.to_string().contains("does not support reranking"), "{e}");
-        assert_eq!(models("", &mock(200, RERANK_OK, z)).rerank("q", &["d".into()]).unwrap(), vec![0.75]);
+        assert_eq!(models("", &mock(200, RERANK_OK, z)).rerank_within("q", &["d".into()], Duration::MAX).unwrap(), vec![0.75]);
     }
 
     #[test]
@@ -301,7 +308,7 @@ pub(crate) mod tests {
         assert_eq!(redact("http://host:8084/a@b"), "http://host:8084/a@b");
         assert_eq!(redact("host"), "host");
         let url = dead_url().replace("http://", "http://u:secret@");
-        let e = models(&url, "").embed(&["q".into()]).unwrap_err();
+        let e = models(&url, "").embed_within(&["q".into()], Duration::MAX).unwrap_err();
         assert!(!e.to_string().contains("secret"), "{e}");
     }
 

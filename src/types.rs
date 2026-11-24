@@ -85,12 +85,24 @@ pub struct MatchReq {
     /// client prefixed `mcp:` and keeps them out of the hook's hit-rate stats.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub source: Option<String>,
+    /// How long the caller will wait for the answer, in ms. The server fits its model calls into it
+    /// (skipping the reranker when too little is left). Default `MIMIR_MATCH_BUDGET_MS` (2000).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub budget_ms: Option<u64>,
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug)]
 pub struct MatchResp {
     pub hits: Vec<Hit>,
     pub ms: u64,
+    /// False when the scores are cosine similarities: reranking was off, or it did not fit the budget
+    /// and the hits are in embedding order. Older servers do not send it.
+    #[serde(default = "yes")]
+    pub reranked: bool,
+}
+
+fn yes() -> bool {
+    true
 }
 
 // Responses of the read API (/api/...).

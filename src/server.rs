@@ -16,12 +16,21 @@ use serde_json::{json, Value};
 use std::convert::Infallible;
 use std::sync::{Arc, Mutex};
 use tokio::sync::broadcast;
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
 /// Skills sent to the reranker per prompt (picked by cosine).
 pub const CANDIDATES: usize = 12;
 /// Default reranker score a skill needs to be suggested. Tuned with `mimir eval`.
 pub const DEFAULT_MIN: f32 = 0.1;
+/// Below this much remaining budget the reranker is not called at all.
+const MIN_RERANK: Duration = Duration::from_millis(250);
+
+/// The time a /match may spend: the caller's `budget_ms`, else `MIMIR_MATCH_BUDGET_MS` (default
+/// 2000 ms, inside the hook's 2.5 s), clamped to 0.1-60 s.
+fn match_budget(req: &MatchReq) -> Duration {
+    let ms = req.budget_ms.or_else(|| std::env::var("MIMIR_MATCH_BUDGET_MS").ok().and_then(|v| v.parse().ok())).unwrap_or(2000);
+    Duration::from_millis(ms.clamp(100, 60_000))
+}
 
 pub struct App {
     pub db: Mutex<Connection>,
@@ -334,15 +343,19 @@ fn lexical_default() -> bool {
 }
 
 /// Embed the prompt, take the closest skills by cosine, let the reranker judge them.
+/// Model calls share one deadline (`match_budget`): the reranker gets what the embedding left, and
+/// when that is too little, or the reranker runs out of it, the hits keep embedding order.
 pub fn do_match(a: &App, req: &MatchReq, client: Option<&str>) -> Result<MatchResp> {
     let t = Instant::now();
+    let deadline = t + match_budget(req);
+    let left = || deadline.saturating_duration_since(Instant::now());
     let k = req.k.unwrap_or(3);
     let min = req.min.unwrap_or(DEFAULT_MIN);
     let q = req.prompt.trim();
     let (clipped, prompt_len) = clip_query(q);
     let qv = a
         .models
-        .embed(&[query_text(&clipped)])
+        .embed_within(&[query_text(&clipped)], left())
         .map_err(|e| {
             eprintln!("match: embed failed after {} ms: {e:#}", t.elapsed().as_millis());
             e
@@ -364,15 +377,26 @@ pub fn do_match(a: &App, req: &MatchReq, client: Option<&str>) -> Result<MatchRe
         }
     }
 
-    let scores = if req.rerank.unwrap_or(true) {
+    let reranked = req.rerank.unwrap_or(true) && rerank_fits(left());
+    let scores = if reranked {
         let docs: Vec<String> = cands.iter().map(|(n, d, _)| format!("{n}: {d}")).collect();
-        a.models.rerank(&clipped, &docs).map_err(|e| {
-            eprintln!("match: rerank failed after {} ms: {e:#}", t.elapsed().as_millis());
-            e
-        })?
+        match a.models.rerank_within(&clipped, &docs, left()) {
+            Ok(s) => Some(s),
+            // Out of time: an answer in embedding order beats none (the caller is about to give up).
+            Err(e) if matches!(e.downcast_ref::<ModelError>(), Some(ModelError::Timeout(_))) => None,
+            Err(e) => {
+                eprintln!("match: rerank failed after {} ms: {e:#}", t.elapsed().as_millis());
+                return Err(e);
+            }
+        }
     } else {
-        cands.iter().map(|c| c.2).collect()
+        None
     };
+    if scores.is_none() && req.rerank.unwrap_or(true) {
+        eprintln!("match: rerank did not fit the budget ({} ms used), using embedding order", t.elapsed().as_millis());
+    }
+    let reranked = scores.is_some();
+    let scores = scores.unwrap_or_else(|| cands.iter().map(|c| c.2).collect());
     let mut hits: Vec<Hit> = cands
         .into_iter()
         .zip(scores)
@@ -391,7 +415,12 @@ pub fn do_match(a: &App, req: &MatchReq, client: Option<&str>) -> Result<MatchRe
             "client": client, "prompt_len": prompt_len,
         } }));
     }
-    Ok(MatchResp { hits, ms })
+    Ok(MatchResp { hits, ms, reranked })
+}
+
+/// Whether enough of the budget is left to call the reranker.
+fn rerank_fits(left: Duration) -> bool {
+    left >= MIN_RERANK
 }
 
 /// Log rows older than this are pruned (30 days).
@@ -470,6 +499,42 @@ mod tests {
         assert_eq!(check_put("Demo", &mut s.clone()).unwrap_err().0, StatusCode::UNPROCESSABLE_ENTITY);
         let bad = crate::types::File { path: "../x".into(), mode: 0o644, b64: String::new() };
         assert_eq!(check_put("demo", &mut Skill { files: Some(vec![bad]), ..s }).unwrap_err().0, StatusCode::BAD_REQUEST);
+    }
+
+    fn app(url: &str, rerank_url: &str) -> App {
+        let c = Connection::open_in_memory().unwrap();
+        db::init(&c).unwrap();
+        db::put(&c, &Skill { name: "a".into(), description: "d".into(), body: "b".into(), ..Default::default() }, &[0.6, 0.8], "e").unwrap();
+        App {
+            db: Mutex::new(c),
+            models: crate::models::tests::models_with(url, rerank_url, Duration::from_secs(3)),
+            token: "t".repeat(16),
+            events: broadcast::channel(4).0,
+        }
+    }
+
+    #[test]
+    fn match_falls_back_to_embedding_order_when_out_of_budget() {
+        use crate::models::tests::{dead_url, mock, EMBED_OK, RERANK_OK};
+        let z = Duration::ZERO;
+        let req = |budget_ms| MatchReq { prompt: "p".into(), log: Some(false), budget_ms: Some(budget_ms), ..Default::default() };
+        // In time: reranker scores.
+        let r = do_match(&app(&mock(200, EMBED_OK, z), &mock(200, RERANK_OK, z)), &req(2000), None).unwrap();
+        assert!(r.reranked && r.hits[0].score == 0.75);
+        // The reranker is slower than what is left (its own 3 s cap is not the limit): cosine order,
+        // well inside the budget.
+        let t = Instant::now();
+        let r = do_match(&app(&mock(200, EMBED_OK, z), &mock(200, RERANK_OK, Duration::from_secs(2))), &req(600), None).unwrap();
+        assert!(!r.reranked && (r.hits[0].score - 1.0).abs() < 1e-6, "{:?}", r.hits);
+        assert!(t.elapsed() < Duration::from_millis(900), "{:?}", t.elapsed());
+        // The embedding used up the budget: the reranker is not called (a dead URL would fail).
+        let r = do_match(&app(&mock(200, EMBED_OK, Duration::from_millis(200)), &dead_url()), &req(300), None).unwrap();
+        assert!(!r.reranked);
+        // A reranker that is down is still an error (503), not a silent fallback.
+        let e = do_match(&app(&mock(200, EMBED_OK, z), &dead_url()), &req(2000), None).unwrap_err();
+        assert_eq!(E::from(e).0, StatusCode::SERVICE_UNAVAILABLE);
+        assert_eq!(match_budget(&MatchReq { budget_ms: Some(5), ..Default::default() }), Duration::from_millis(100));
+        assert!(!rerank_fits(Duration::from_millis(100)) && rerank_fits(Duration::from_millis(400)));
     }
 
     #[test]

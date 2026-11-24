@@ -115,6 +115,12 @@ mimir --json doctor                          # every check with ok / warn / fail
 
 - Never stalls a prompt: 300 ms connect timeout, 2.5 s overall (`MIMIR_HOOK_TIMEOUT_MS`). When the server is
   unreachable the hook writes `~/.cache/mimir/down` and skips the call for 30 s. It is silent on any failure.
+- Fits the server's work into that: each `/match` carries a `budget_ms` (the client's timeout minus 500 ms,
+  so 2000 ms for the hook; `MIMIR_MATCH_BUDGET_MS` on the server for callers that send none, default 2000).
+  The embedding call (at most `MIMIR_EMBED_TIMEOUT_MS`, 2000) and the rerank call (at most
+  `MIMIR_RERANK_TIMEOUT_MS`, 3000) share that deadline. When less than 250 ms is left for the reranker, or it
+  runs out of time, the hits come back in embedding order with cosine scores and `"reranked": false`, and
+  the hook auto-loads nothing.
 - Sends `X-Mimir-Client: <claude|codex|cli>@<host>` so the activity log shows which agent on which machine asked.
 - Auto-loads: suggestions alone were never acted on, so when the top hit scores at least `MIMIR_AUTOLOAD_MIN`
   (default 0.9) and was not already loaded in this session (`session_id`, remembered in `~/.cache/mimir/sessions/`),
