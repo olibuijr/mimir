@@ -31,7 +31,7 @@ hook and MCP server on each machine.
   against the Agent Skills spec on every save.
 - **Found by meaning:** a prompt like "the gateway drops port 443" finds the
   router skill without naming it. On a 140-prompt eval set the right skill is the
-  top hit 92% of the time, and prompts that need no skill get none.
+  top hit 89% of the time (97% in the top three), and prompts that need no skill get none.
 - **Never in the way:** the hook gives up after 2.5 s and stays silent when the
   server is down; loaded skills are cached for offline use.
 - **Web UI:** library, skill detail with files, versions and diffs, a playground

@@ -156,7 +156,7 @@
     <div class="wrap"><div class="hero-text grid hero__grid">
       <div class="span-3">
         <h1 id="hero-h">Skill server for AI coding agents</h1>
-        <p class="hero__lead">Mímir keeps your Agent Skills on one server and gives Claude Code or Codex the right one for each prompt, matched by meaning in about 100 ms.</p>
+        <p class="hero__lead">Mímir keeps your Agent Skills on one server and gives Claude Code or Codex the right one for each prompt, matched by meaning in about 150 ms.</p>
       </div>
       <div class="ly-collage span-6 start-4" role="img" aria-label="Mímir's playground tracing a prompt to the postgres-ops skill, the prompt hook's output, the skill library and the activity log">
         <div class="ly-collage__set is-on">
@@ -242,10 +242,10 @@
           <h3>The matcher stays quiet when no skill fits</h3>
           <p>Prompts that need no skill get none. On a 140-prompt test set, none of the 35 got a false match.</p>
           <div class="panel"><div class="ui ui-panel" style="width:100%"><pre class="dk-code"><span class="p">$</span> mimir eval cases.tsv
-recall@1   <b>0.92</b>     recall@3   <b>0.99</b>
-decisions right   <b>0.93</b>
-false alarms      <span class="ok">0 / 35</span>
-latency p50       126 ms</pre></div></div>
+== embed + rerank (140 cases, 35 accept none)
+recall@1 <b>0.89</b>  recall@3 <b>0.97</b>
+latency p50 158 ms  p95 229 ms
+min 0.1  decide-acc <b>0.90</b>  false-alarm <span class="ok">0</span></pre></div></div>
         </article>
         <article class="card card--row card--open span-6">
           <h3>The hook never slows a prompt down</h3>
@@ -356,7 +356,7 @@ fill in the TODOs, then: mimir validate ./nightly-report &amp;&amp; mimir import
         <div class="faq__item"><h3>Which agents work with Mímir?</h3><p>Claude Code and Codex through the prompt hook and MCP. Any agent that speaks MCP or can run a command can search and load skills.</p></div>
         <div class="faq__item"><h3>Do prompts leave the Mímir server?</h3><p>No. Matching runs on your server with local models. Prompts are logged for 30 days so you can see why a skill did or did not match.</p></div>
         <div class="faq__item"><h3>Where does Mímir keep secrets?</h3><p>A skill's <code>.env</code> is stored on the server and written to the machine, mode 600, when the skill is loaded. The web UI never shows secret values.</p></div>
-        <div class="faq__item"><h3>What hardware do the Mímir models need?</h3><p>The two models are about 1 GB together and run on a CPU; on a GPU a match takes about 100 ms.</p></div>
+        <div class="faq__item"><h3>What hardware do the Mímir models need?</h3><p>The two models are about 1 GB together and run on a CPU; on a GPU a match takes about 150 ms.</p></div>
       </div>
       <div class="span-6 start-7 stack-4">
         <div class="panel"><div class="ui ui-panel" style="width:100%"><pre class="dk-code"><span class="p">$</span> mimir validate release-flow
