@@ -86,7 +86,7 @@
   .mm-bars b { font-weight: 500; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .mm-bars span { text-align: right; }
   .mm-bars .h { color: var(--p-muted); font-family: var(--font-text); font-size: 12px; }
-  @media (max-width: 639px) { .pc-term { white-space: normal; } .pc-term > span { display: block; } #how .panel { --p-h: 196px; } #install .panel { --p-h: 200px; } .dk-code { font-size: 12px; white-space: pre-wrap; overflow-wrap: anywhere; padding: 14px 16px; } .mm-bars li { grid-template-columns: 100px 1fr 40px; } }
+  @media (max-width: 639px) { .pc-term { white-space: normal; } .pc-term > span { display: block; } #how .panel { --p-h: 180px; } #install .panel { --p-h: 200px; } .dk-code { font-size: 12px; white-space: pre-wrap; overflow-wrap: anywhere; padding: 14px 16px; } .mm-bars li { grid-template-columns: 100px 1fr 40px; } }
 
   /* the statement moment */
   #open > .wrap { display: grid; align-content: center; height: 100%; }
@@ -98,7 +98,7 @@
   .mm-tools { list-style: none; padding: 0; margin: var(--s-4) 0 0; display: grid; gap: 0; }
   .mm-tools li { display: grid; grid-template-columns: 120px 1fr; gap: 12px; padding: 12px 0; border-top: 1px solid rgb(16 14 26 / .14); }
   .mm-tools code { color: var(--p-accent); }
-  @media (max-width: 639px) { #library .mm-shot img { height: 72vh; object-fit: cover; object-position: top; } }
+  @media (max-width: 639px) { #library .mm-shot img { height: 104vh; object-fit: cover; object-position: top; } }
   #agents code, #faq code { font-family: var(--font-mono); font-size: .92em; }
   @media (max-width: 639px) { #agents .panel { --p-h: 440px; } }
   .dk-stack { list-style: none; padding: 0; margin: var(--s-8) 0 0; }
@@ -189,7 +189,7 @@
     </div></div>
   </section>
 
-  <section class="section" id="library" aria-labelledby="library-h">
+  <section class="section" style="--hm: 2" id="library" aria-labelledby="library-h">
     <div class="wrap">
       <div class="grid">
         <h2 id="library-h" class="span-6">One skill library for every machine and agent</h2>
@@ -213,7 +213,7 @@
         <div class="grid">
           <article class="card card--row card--open span-6">
             <h3>The reranker scores every skill for each prompt</h3>
-            <p>An embedding model shortlists twelve skills and a reranker judges whether each one would help.</p>
+            <p>Embeddings shortlist twelve skills; a reranker judges whether each would help.</p>
             <div class="panel"><div class="ui ui-panel" style="width:100%">
               <ul class="mm-bars">
                 <li class="h"><span style="text-align:left">"the gateway drops port 443"</span><span></span><span>score</span></li>
@@ -233,7 +233,7 @@
   { "type": "command", "command": "mimir hook" } ] }]
 
 <span class="m"># injected into the conversation</span>
-<span class="p">Mímir loaded skill</span> `release-flow` for this prompt (best match). It is already loaded: follow it, no need to call skill_get. Its files are in /home/you/.cache/mimir/skills/release-flow.</pre></div></div>
+<span class="p">Mímir loaded skill</span> `release-flow` for this prompt (best match). Its files are in ~/.cache/mimir/skills/release-flow. …</pre></div></div>
           </article>
         </div>
       </div>
@@ -249,18 +249,15 @@ min 0.1  decide-acc <b>0.90</b>  false-alarm <span class="ok">0</span></pre></di
         </article>
         <article class="card card--row card--open span-6">
           <h3>The hook never slows a prompt down</h3>
-          <p>The hook gives up after 2.5 seconds, and loaded skills are cached for when the server is away.</p>
+          <p>The hook gives up after 2.5 seconds; loaded skills are cached for offline use.</p>
           <div class="panel"><div class="ui ui-panel" style="width:100%"><pre class="dk-code"><span class="p">$</span> mimir doctor
 <span class="ok">✓</span> server http://server:7440 reachable, version 0.5.0 matches the client
 <span class="ok">✓</span> token accepted (9 skills)
 <span class="ok">✓</span> embedding model embeddinggemma-2-Q8_0 answers /v1/embeddings
 <span class="ok">✓</span> reranking model qwen3-reranker-0.6b-q8_0 answers /v1/rerank
-<span class="ok">✓</span> embeddings match the configured model
-<span class="ok">✓</span> last backup 3 h ago
 <span class="ok">✓</span> Claude hook in ~/.claude/settings.json
-<span class="ok">✓</span> Claude MCP server registered
 <span class="ok">✓</span> Codex hook in ~/.codex/hooks.json
-<span class="ok">✓</span> Codex MCP server in ~/.codex/config.toml</pre></div></div>
+…</pre></div></div>
         </article>
       </div>
     </div>
