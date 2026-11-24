@@ -900,6 +900,7 @@ fn classify(c: &Case, top: Option<&str>) -> Outcome {
 
 pub fn eval(c: &Client, path: &Path) -> Result<()> {
     let cases = parse_cases(&std::fs::read_to_string(path)?);
+    anyhow::ensure!(!cases.is_empty(), "{}: no cases (one `prompt<TAB>expected` per line)", path.display());
     let lexical = std::env::var("MIMIR_EVAL_LEXICAL").is_ok_and(|v| v == "1").then_some(true);
     for rerank in [false, true] {
         let mut rows = vec![];
@@ -1061,6 +1062,15 @@ mod tests {
         assert!(cs[1].exp == ["a", "b"]);
         assert!(cs[2].none_ok && cs[2].exp.is_empty());
         assert!(cs[3].none_ok && cs[3].exp == ["a"]);
+    }
+
+    #[test]
+    fn eval_without_cases_is_an_error() {
+        let p = std::env::temp_dir().join(format!("mimir-eval-empty-{}.tsv", std::process::id()));
+        std::fs::write(&p, "# only a comment\n").unwrap();
+        let c = Client { url: "http://127.0.0.1:1".into(), token: "t".into(), agent: ureq::agent() };
+        assert!(eval(&c, &p).unwrap_err().to_string().contains("no cases"));
+        let _ = std::fs::remove_file(&p);
     }
 
     #[test]
