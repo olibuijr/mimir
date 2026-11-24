@@ -1,5 +1,7 @@
 // Mimir web UI. `npm run build` emits exactly dist/{index.html,app.js,app.css}, embedded by the Rust binary (build.rs).
 // `npm run dev` serves on :7441 and proxies /api and /match to the server, adding the bearer token server-side.
+// Since anyone who reaches the dev server gets full access, it listens on localhost only; set
+// MIMIR_DEV_HOST (e.g. 0.0.0.0, or a LAN address) to opt into serving other machines.
 import { defineConfig } from 'vite';
 import { svelte } from '@sveltejs/vite-plugin-svelte';
 import { readFileSync } from 'node:fs';
@@ -41,5 +43,5 @@ export default defineConfig({
       },
     },
   },
-  server: { port: 7441, host: true, proxy: { '/api': rule, '/match': rule } },
+  server: { port: 7441, host: process.env.MIMIR_DEV_HOST || '127.0.0.1', proxy: { '/api': rule, '/match': rule } },
 });

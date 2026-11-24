@@ -9,6 +9,7 @@ All notable changes to this project are documented here. The format follows
 ### Fixed
 - `PUT /skills/{name}` stored file modes unmasked (e.g. setuid bits); the masked copies from the file check were thrown away. Modes are now stored masked to 0o777, as 0.4.0 intended.
 - `mimir eval` panicked (index out of bounds) on a cases file with no cases; it now says so and exits 1.
+- The web UI dev server (`npm run dev`) listened on every interface and added the real token to proxied requests, so anyone on the LAN had full access. It now listens on localhost; `MIMIR_DEV_HOST` opts into other hosts.
 
 ## [0.5.0] - 2026-11-24
 

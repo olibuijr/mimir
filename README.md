@@ -180,7 +180,8 @@ are never sent to the browser. The UI (Svelte 5, `web/`) is built to `web/dist` 
 binary by `build.rs`; without it the server serves a "UI not built" stub.
 
 Dev: `cd web && npm run dev` serves on :7441 and proxies `/api` and `/match` to `MIMIR_URL` (default `http://127.0.0.1:7440`) with the token
-from `~/.config/mimir/env`.
+from `~/.config/mimir/env`. Because it adds the token, it listens on localhost only; `MIMIR_DEV_HOST=0.0.0.0 npm run dev`
+opts into serving the LAN (anyone who can reach :7441 then has full access).
 
 Extra routes (cookie or bearer): `GET /api/config`,
 `GET /api/skills`, `GET /api/skills/{name}`, `GET /api/skills/{name}/files/{path}`,
