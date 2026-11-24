@@ -1,5 +1,5 @@
 //! Calls to the embedding and reranking models (an OpenAI-style API such as llama.cpp's llama-server).
-use anyhow::{anyhow, Context, Result};
+use anyhow::Result;
 use serde_json::{json, Value};
 use std::time::Duration;
 
@@ -11,6 +11,85 @@ pub struct Models {
     agent: ureq::Agent,
     embed_timeout: Duration,
     rerank_timeout: Duration,
+}
+
+/// A failed call to a model server, classified so the API can tell an outage from a Mímir bug.
+/// Messages name the call and the server (credentials in the URL removed), never request data.
+#[derive(Debug)]
+pub enum ModelError {
+    /// The model server answered with an error status or a response Mímir cannot use (502).
+    Bad(String),
+    /// The model server could not be reached (503).
+    Down(String),
+    /// The model server did not answer in time (504).
+    Timeout(String),
+}
+
+impl ModelError {
+    /// The HTTP status the API answers with.
+    pub fn status(&self) -> u16 {
+        match self {
+            ModelError::Bad(_) => 502,
+            ModelError::Down(_) => 503,
+            ModelError::Timeout(_) => 504,
+        }
+    }
+
+    fn from_ureq(what: &str, url: &str, e: ureq::Error) -> Self {
+        let url = redact(url);
+        match e {
+            ureq::Error::Status(code, r) => {
+                let body = r.into_string().unwrap_or_default();
+                ModelError::Bad(format!("{what}: model server {url} answered {code}: {}", clip(body.trim(), 200)))
+            }
+            ureq::Error::Transport(t) => {
+                let io = std::error::Error::source(&t).and_then(|s| s.downcast_ref::<std::io::Error>()).map(std::io::Error::kind);
+                if t.kind() == ureq::ErrorKind::Io && io == Some(std::io::ErrorKind::TimedOut) {
+                    ModelError::Timeout(format!("{what}: model server {url} did not answer in time"))
+                } else {
+                    ModelError::Down(format!("{what}: model server {url} is unreachable ({})", t.kind()))
+                }
+            }
+        }
+    }
+
+    /// Reading or decoding the response body failed.
+    fn from_body(what: &str, url: &str, e: std::io::Error) -> Self {
+        let url = redact(url);
+        if matches!(e.kind(), std::io::ErrorKind::TimedOut | std::io::ErrorKind::WouldBlock) {
+            ModelError::Timeout(format!("{what}: model server {url} did not answer in time"))
+        } else {
+            ModelError::Bad(format!("{what}: model server {url} sent an unreadable response: {}", clip(&e.to_string(), 200)))
+        }
+    }
+
+    fn bad_shape(what: &str, url: &str, r: &Value) -> Self {
+        ModelError::Bad(format!("{what}: model server {} sent an unexpected response: {}", redact(url), clip(&r.to_string(), 200)))
+    }
+}
+
+impl std::fmt::Display for ModelError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let (ModelError::Bad(m) | ModelError::Down(m) | ModelError::Timeout(m)) = self;
+        f.write_str(m)
+    }
+}
+impl std::error::Error for ModelError {}
+
+/// A URL without the `user:password@` part.
+pub fn redact(url: &str) -> String {
+    let Some((scheme, rest)) = url.split_once("://") else { return url.to_string() };
+    let end = rest.find('/').unwrap_or(rest.len());
+    match rest[..end].rfind('@') {
+        Some(at) => format!("{scheme}://{}", &rest[at + 1..]),
+        None => url.to_string(),
+    }
+}
+
+/// POST JSON to a model server and read the JSON answer, with errors classified.
+fn post_json(agent: &ureq::Agent, what: &str, url: &str, timeout: Duration, body: Value) -> Result<Value, ModelError> {
+    let r = agent.post(url).timeout(timeout).send_json(body).map_err(|e| ModelError::from_ureq(what, url, e))?;
+    r.into_json().map_err(|e| ModelError::from_body(what, url, e))
 }
 
 /// Instruction for Qwen3-reranker: makes the score a calibrated "is this skill needed?" judgement.
@@ -44,18 +123,13 @@ impl Models {
     }
 
     fn embed_with(&self, inputs: &[String], timeout: Duration) -> Result<Vec<Vec<f32>>> {
-        let r: Value = self
-            .agent
-            .post(&format!("{}/v1/embeddings", self.url))
-            .timeout(timeout)
-            .send_json(json!({ "model": self.embed_model, "input": inputs }))
-            .context("embedding request")?
-            .into_json()?;
-        let mut data = r["data"].as_array().ok_or_else(|| anyhow!("bad embeddings response: {r}"))?.clone();
+        let (what, url) = ("embedding request", format!("{}/v1/embeddings", self.url));
+        let r = post_json(&self.agent, what, &url, timeout, json!({ "model": self.embed_model, "input": inputs }))?;
+        let mut data = r["data"].as_array().filter(|d| d.len() == inputs.len()).ok_or_else(|| ModelError::bad_shape(what, &url, &r))?.clone();
         data.sort_by_key(|d| d["index"].as_u64().unwrap_or(0));
         data.iter()
             .map(|d| {
-                let v = d["embedding"].as_array().ok_or_else(|| anyhow!("no embedding"))?;
+                let v = d["embedding"].as_array().filter(|v| !v.is_empty()).ok_or_else(|| ModelError::bad_shape(what, &url, &r))?;
                 Ok(normalize(v.iter().map(|x| x.as_f64().unwrap_or(0.0) as f32).collect()))
             })
             .collect()
@@ -72,15 +146,10 @@ impl Models {
         if !instruction.is_empty() {
             body["instruction"] = json!(instruction);
         }
-        let r: Value = self
-            .agent
-            .post(&format!("{}/v1/rerank", self.rerank_url))
-            .timeout(self.rerank_timeout)
-            .send_json(body)
-            .context("rerank request")?
-            .into_json()?;
+        let (what, url) = ("rerank request", format!("{}/v1/rerank", self.rerank_url));
+        let r = post_json(&self.agent, what, &url, self.rerank_timeout, body)?;
         let mut scores = vec![0.0; docs.len()];
-        for x in r["results"].as_array().ok_or_else(|| anyhow!("bad rerank response: {r}"))? {
+        for x in r["results"].as_array().ok_or_else(|| ModelError::bad_shape(what, &url, &r))? {
             let i = x["index"].as_u64().unwrap_or(0) as usize;
             if i < scores.len() {
                 scores[i] = x["relevance_score"].as_f64().unwrap_or(0.0) as f32;
@@ -137,8 +206,104 @@ pub fn from_blob(b: &[u8]) -> Vec<f32> {
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use super::*;
+    use std::io::{Read, Write};
+
+    /// A one-thread HTTP server on 127.0.0.1 that answers every request with `status` and `body`
+    /// after `delay`. Returns its base URL.
+    pub(crate) fn mock(status: u16, body: &'static str, delay: Duration) -> String {
+        let l = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let url = format!("http://{}", l.local_addr().unwrap());
+        std::thread::spawn(move || {
+            for s in l.incoming() {
+                let Ok(mut s) = s else { continue };
+                std::thread::spawn(move || {
+                    // Read the head, then the body by Content-Length, so the client sees a clean exchange.
+                    let mut buf = vec![];
+                    let mut b = [0u8; 4096];
+                    let need = loop {
+                        let Ok(n) = s.read(&mut b) else { return };
+                        if n == 0 {
+                            return;
+                        }
+                        buf.extend_from_slice(&b[..n]);
+                        if let Some(i) = buf.windows(4).position(|w| w == b"\r\n\r\n") {
+                            let head = String::from_utf8_lossy(&buf[..i]).to_lowercase();
+                            let len = head.lines().find_map(|l| l.strip_prefix("content-length:")).and_then(|v| v.trim().parse().ok()).unwrap_or(0);
+                            break i + 4 + len;
+                        }
+                    };
+                    while buf.len() < need {
+                        let Ok(n) = s.read(&mut b) else { return };
+                        if n == 0 {
+                            return;
+                        }
+                        buf.extend_from_slice(&b[..n]);
+                    }
+                    std::thread::sleep(delay);
+                    let _ = write!(
+                        s,
+                        "HTTP/1.1 {status} X\r\ncontent-type: application/json\r\ncontent-length: {}\r\nconnection: close\r\n\r\n{body}",
+                        body.len()
+                    );
+                });
+            }
+        });
+        url
+    }
+
+    /// A URL nothing listens on.
+    pub(crate) fn dead_url() -> String {
+        let l = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        format!("http://{}", l.local_addr().unwrap())
+    }
+
+    pub(crate) fn models(url: &str, rerank_url: &str) -> Models {
+        Models {
+            url: url.into(),
+            rerank_url: rerank_url.into(),
+            embed_model: "e".into(),
+            rerank_model: "r".into(),
+            agent: ureq::AgentBuilder::new().timeout_connect(Duration::from_millis(500)).build(),
+            embed_timeout: Duration::from_millis(300),
+            rerank_timeout: Duration::from_millis(300),
+        }
+    }
+
+    fn kind(r: Result<Vec<Vec<f32>>>) -> u16 {
+        r.unwrap_err().downcast_ref::<ModelError>().expect("a ModelError").status()
+    }
+
+    pub(crate) const EMBED_OK: &str = r#"{"data":[{"index":0,"embedding":[3.0,4.0]}]}"#;
+    pub(crate) const RERANK_OK: &str = r#"{"results":[{"index":0,"relevance_score":0.75}]}"#;
+
+    #[test]
+    fn model_failures_are_classified() {
+        let z = Duration::ZERO;
+        let q = ["q".to_string()];
+        assert_eq!(models(&mock(200, EMBED_OK, z), "").embed(&q).unwrap(), vec![vec![0.6, 0.8]]);
+        assert_eq!(kind(models(&mock(500, r#"{"error":"boom"}"#, z), "").embed(&q)), 502);
+        assert_eq!(kind(models(&mock(200, r#"{"data":[]}"#, z), "").embed(&q)), 502);
+        assert_eq!(kind(models(&mock(200, "not json", z), "").embed(&q)), 502);
+        assert_eq!(kind(models(&dead_url(), "").embed(&q)), 503);
+        assert_eq!(kind(models(&mock(200, EMBED_OK, Duration::from_millis(1500)), "").embed(&q)), 504);
+        let m = models("", &mock(501, r#"{"error":{"message":"This server does not support reranking"}}"#, z));
+        let e = m.rerank("q", &["d".into()]).unwrap_err();
+        assert_eq!(e.downcast_ref::<ModelError>().unwrap().status(), 502);
+        assert!(e.to_string().contains("501") && e.to_string().contains("does not support reranking"), "{e}");
+        assert_eq!(models("", &mock(200, RERANK_OK, z)).rerank("q", &["d".into()]).unwrap(), vec![0.75]);
+    }
+
+    #[test]
+    fn urls_in_messages_lose_credentials() {
+        assert_eq!(redact("http://u:secret@host:8084/v1/rerank"), "http://host:8084/v1/rerank");
+        assert_eq!(redact("http://host:8084/a@b"), "http://host:8084/a@b");
+        assert_eq!(redact("host"), "host");
+        let url = dead_url().replace("http://", "http://u:secret@");
+        let e = models(&url, "").embed(&["q".into()]).unwrap_err();
+        assert!(!e.to_string().contains("secret"), "{e}");
+    }
 
     #[test]
     fn short_query_unchanged() {

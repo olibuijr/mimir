@@ -13,6 +13,7 @@ All notable changes to this project are documented here. The format follows
 - `deploy/install.sh` appended a second `MIMIR_TOKEN` when `~/.config/mimir/env` held one shorter than 16 characters, so systemd (last line) and the CLI (first line) used different tokens. It now replaces the short one.
 - The database right after creation and each new backup briefly had the default file mode, and the backups directory was 0755. Both files are now created 0600 and the directory 0700 (an existing one is tightened).
 - `mimir get` and the MCP `skill_get` put the skill name into the URL unencoded and, with the server down, joined it onto the cache path unchecked (`../x` escaped the cache). Names are now checked against the spec's name rule first, with a clear error.
+- Model server failures came back as HTTP 500, like a Mímir bug. They are now 502 when the model server answered with an error or an unusable response, 503 when it cannot be reached and 504 when it is too slow; messages name the call and the server, without credentials from its URL.
 
 ## [0.5.0] - 2026-11-24
 

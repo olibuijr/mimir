@@ -1,6 +1,6 @@
 //! `mimir serve`: the HTTP API.
 use crate::db;
-use crate::models::{clip_query, doc_text, dot, query_text, Models};
+use crate::models::{clip_query, doc_text, dot, query_text, ModelError, Models};
 use crate::spec;
 use crate::types::{Hit, MatchReq, MatchResp, Skill, Summary};
 use anyhow::Result;
@@ -53,8 +53,13 @@ impl IntoResponse for E {
     }
 }
 impl From<anyhow::Error> for E {
+    /// A model server failure is 502 (it answered with an error), 503 (unreachable) or 504 (too slow);
+    /// anything else is Mímir's own 500.
     fn from(e: anyhow::Error) -> Self {
-        E(StatusCode::INTERNAL_SERVER_ERROR, format!("{e:#}"))
+        let code = e
+            .downcast_ref::<ModelError>()
+            .map_or(StatusCode::INTERNAL_SERVER_ERROR, |m| StatusCode::from_u16(m.status()).unwrap_or(StatusCode::BAD_GATEWAY));
+        E(code, format!("{e:#}"))
     }
 }
 impl From<rusqlite::Error> for E {
@@ -465,6 +470,15 @@ mod tests {
         assert_eq!(check_put("Demo", &mut s.clone()).unwrap_err().0, StatusCode::UNPROCESSABLE_ENTITY);
         let bad = crate::types::File { path: "../x".into(), mode: 0o644, b64: String::new() };
         assert_eq!(check_put("demo", &mut Skill { files: Some(vec![bad]), ..s }).unwrap_err().0, StatusCode::BAD_REQUEST);
+    }
+
+    #[test]
+    fn model_failures_are_not_500() {
+        let code = |e: anyhow::Error| E::from(e).0.as_u16();
+        assert_eq!(code(ModelError::Bad("x".into()).into()), 502);
+        assert_eq!(code(ModelError::Down("x".into()).into()), 503);
+        assert_eq!(code(anyhow::Error::from(ModelError::Timeout("x".into())).context("matching")), 504);
+        assert_eq!(code(anyhow::anyhow!("a bug")), 500);
     }
 
     #[test]
